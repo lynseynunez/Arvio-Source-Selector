@@ -1,0 +1,30 @@
+name: Verify Watchmode connection
+on:
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify API key and sample source lookup
+        env:
+          WATCHMODE_API_KEY: ${{ secrets.WATCHMODE_API_KEY }}
+        run: |
+          python3 - <<'PY'
+          import os, json, urllib.request, urllib.error
+          key=os.environ.get('WATCHMODE_API_KEY','')
+          if not key:
+              raise SystemExit('WATCHMODE_API_KEY is missing from repository secrets')
+          def fetch(path):
+              req=urllib.request.Request('https://api.watchmode.com/v1'+path,headers={'X-API-Key':key,'Accept':'application/json'})
+              with urllib.request.urlopen(req,timeout=15) as res:
+                  return json.load(res)
+          try:
+              status=fetch('/status/')
+              print('Watchmode authentication: OK')
+              print('Status response received; secret was not printed.')
+              sources=fetch('/title/tt0133093/sources/?regions=US')
+              print('Sample US viewing sources:',len(sources) if isinstance(sources,list) else 'unexpected response')
+              if not isinstance(sources,list): raise RuntimeError('Expected a source list')
+          except urllib.error.HTTPError as e:
+              raise SystemExit('Watchmode request failed with HTTP '+str(e.code))
+          PY
