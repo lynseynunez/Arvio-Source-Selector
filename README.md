@@ -30,3 +30,12 @@ Netflix, Disney+, Peacock, Paramount+, Crunchyroll. Real-Debrid continues throug
 
 ## Next
 Validate provider IDs, configure the TMDB token securely, deploy to HTTPS, and test Android phone, tablet, and Chromecast behavior.
+
+## Deployment to Render
+1. Create a Render Web Service from this GitHub repository.
+2. Runtime: Node; build command: `npm install`; start command: `npm start`.
+3. Add environment variable `WATCHMODE_API_KEY` in Render's service environment settings. Never commit its value.
+4. After deployment, verify `https://YOUR-SERVICE.onrender.com/health` reports `watchmodeConfigured: true`.
+5. Verify `/manifest.json` loads before attempting to install it in Arvio.
+
+Note: The GitHub Actions secret is scoped to Actions and does not automatically transfer to Render. Availability, source links and compatibility with Arvio are not yet validated on the live service.
