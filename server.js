@@ -4,7 +4,7 @@ const PORT = Number(process.env.PORT || 3000);
 const KEY = process.env.WATCHMODE_API_KEY;
 const subscriptions = ['netflix', 'disney+', 'peacock', 'paramount+', 'crunchyroll'];
 const manifest = {
-  id: 'community.arvio.source.selector', version: '0.4.0',
+  id: 'community.arvio.source.selector', version: '0.5.0',
   name: 'Arvio Where to Watch (Beta)',
   description: 'US where-to-watch links: subscriptions, free, rent and buy. Real-Debrid stays in existing add-ons.',
   resources: ['stream'], types: ['movie', 'series'], idPrefixes: ['tt'], catalogs: []
@@ -41,7 +41,8 @@ function render(sources) {
     if (seen.has(key)) return [];
     seen.add(key);
     return [{name: label + ' • ' + name + (own && type === 'sub' ? ' ✓ Subscribed' : '') + price,
-      title: label + ' — ' + name + price, externalUrl: link}];
+      title: label + ' — ' + name + price, externalUrl: link,
+      externalUris: [{platform: 'android', uri: link}],\n      isSubscription: type === 'sub', isFree: type === 'free'}];
   });
 }
 async function streams(type, imdb, season, episode) {
