@@ -1,74 +1,75 @@
 import http from 'node:http';
 
 const PORT = Number(process.env.PORT || 3000);
-const TMDB_TOKEN = process.env.TMDB_BEARER_TOKEN;
-const providers = new Map([
-  [8, 'Netflix'], [9, 'Prime Video (not subscribed)'],
-  [337, 'Disney+'], [386, 'Peacock'], [387, 'Peacock Premium'],
-  [531, 'Paramount+'], [582, 'Paramount+ Premium'], [283, 'Crunchyroll']
-]);
-const subscribed = new Set(['Netflix', 'Disney+', 'Peacock', 'Peacock Premium', 'Paramount+', 'Paramount+ Premium', 'Crunchyroll']);
+const KEY = process.env.WATCHMODE_API_KEY;
+const subscriptions = ['netflix', 'disney+', 'peacock', 'paramount+', 'crunchyroll'];
 const manifest = {
-  id: 'community.arvio.source.selector', version: '0.3.0',
-  name: 'Arvio Source Selector',
-  description: 'US subscription availability links for your streaming services; Real-Debrid remains in your existing add-ons.',
+  id: 'community.arvio.source.selector', version: '0.4.0',
+  name: 'Arvio Where to Watch (Beta)',
+  description: 'US where-to-watch links: subscriptions, free, rent and buy. Real-Debrid stays in existing add-ons.',
   resources: ['stream'], types: ['movie', 'series'], idPrefixes: ['tt'], catalogs: []
 };
+const cache = new Map();
 function respond(res, data, status = 200) {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=900' });
+  res.writeHead(status, {'Content-Type':'application/json; charset=utf-8','Access-Control-Allow-Origin':'*','Cache-Control':'public, max-age=900'});
   res.end(JSON.stringify(data));
 }
-async function tmdb(path) {
-  const response = await fetch('https://api.themoviedb.org/3' + path, {
-    headers: { Authorization: 'Bearer ' + TMDB_TOKEN, Accept: 'application/json' },
-    signal: AbortSignal.timeout(8000)
+async function watchmode(path) {
+  const response = await fetch('https://api.watchmode.com/v1' + path, {
+    headers: {'X-API-Key': KEY, Accept: 'application/json'},
+    signal: AbortSignal.timeout(9000)
   });
-  if (!response.ok) throw new Error('TMDB HTTP ' + response.status);
+  if (!response.ok) throw new Error('Watchmode returned HTTP ' + response.status);
   return response.json();
 }
-async function streams(type, imdb) {
-  if (!TMDB_TOKEN) return [];
-  const found = await tmdb('/find/' + encodeURIComponent(imdb) + '?external_source=imdb_id');
-  const result = (type === 'movie' ? found.movie_results : found.tv_results)?.[0];
-  if (!result) return [];
-  const kind = type === 'movie' ? 'movie' : 'tv';
-  const watch = await tmdb('/' + kind + '/' + result.id + '/watch/providers');
-  const us = watch.results?.US;
-  if (!us?.link) return [];
-  const categories = [
-    ['flatrate', 'Included with subscription'],
-    ['free', 'Free'],
-    ['ads', 'Free with ads'],
-    ['rent', 'Rent'],
-    ['buy', 'Buy']
-  ];
-  const options = [];
-  const seen = new Set();
-  for (const [key, label] of categories) {
-    for (const provider of us[key] || []) {
-      const name = providers.get(provider.provider_id) || provider.provider_name;
-      if (!name) continue;
-      const isSubscribed = subscribed.has(name);
-      const display = name.replace(/ Premium$/, '');
-      const unique = key + ':' + display;
-      if (seen.has(unique)) continue;
-      seen.add(unique);
-      options.push({
-        name: label + ' • ' + display + (isSubscribed ? ' ✓ Your subscription' : ''),
-        title: label + ' — ' + display,
-        externalUrl: us.link,
-        description: 'View provider choices on TMDB. Direct provider deep links and prices are not available in this version.'
-      });
-    }
-  }
-  return options;
+function validLink(value) {
+  if (typeof value !== 'string') return null;
+  try { const url = new URL(value); return url.protocol === 'https:' ? url.href : null; }
+  catch { return null; }
 }
-http.createServer(async (req, res) => {
+function render(sources) {
+  const seen = new Set();
+  return sources.filter(s => s.region === 'US').flatMap(s => {
+    const link = validLink(s.web_url);
+    if (!link) return [];
+    const name = String(s.name || 'Provider');
+    const type = String(s.type || '');
+    const own = subscriptions.some(x => name.toLowerCase().includes(x));
+    const label = {sub:'Subscription',free:'Free',rent:'Rent',buy:'Buy',tve:'TV login'}[type] || 'Watch';
+    const price = (type === 'rent' || type === 'buy') && typeof s.price === 'number' ? ' $' + s.price.toFixed(2) : '';
+    const key = [name,type,link].join('|');
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [{name: label + ' • ' + name + (own && type === 'sub' ? ' ✓ Subscribed' : '') + price,
+      title: label + ' — ' + name + price, externalUrl: link}];
+  });
+}
+async function streams(type, imdb, season, episode) {
+  if (!KEY) return [];
+  const cacheKey = [type,imdb,season,episode].join(':');
+  const existing = cache.get(cacheKey);
+  if (existing && existing.expires > Date.now()) return existing.data;
+  let sources;
+  if (type === 'series' && season !== undefined) {
+    // Episode-level links are essential: do not claim whole-series availability for an episode.
+    const payload = await watchmode('/title/' + imdb + '/episodes/?regions=US&season_number=' + season);
+    const episodes = Array.isArray(payload) ? payload : (payload.episodes || payload.results || []);
+    const target = episodes.find(e => Number(e.season_number) === season && Number(e.episode_number) === episode);
+    sources = target?.sources || [];
+  } else {
+    sources = await watchmode('/title/' + imdb + '/sources/?regions=US');
+  }
+  const data = render(Array.isArray(sources) ? sources : []);
+  cache.set(cacheKey, {data, expires:Date.now()+3600000});
+  if (cache.size > 500) cache.delete(cache.keys().next().value);
+  return data;
+}
+http.createServer(async (req,res) => {
   const path = new URL(req.url || '/', 'http://localhost').pathname;
   if (path === '/manifest.json') return respond(res, manifest);
-  if (path === '/health') return respond(res, { ok: true, tmdbConfigured: Boolean(TMDB_TOKEN) });
-  const match = path.match(/^\/stream\/(movie|series)\/(tt\d+)(?::\d+:\d+)?\.json$/);
-  if (!match) return respond(res, { error: 'Not found' }, 404);
-  try { return respond(res, { streams: await streams(match[1], match[2]) }); }
-  catch (err) { console.error(err); return respond(res, { streams: [] }); }
-}).listen(PORT, '0.0.0.0', () => console.log('Arvio Source Selector on port ' + PORT));
+  if (path === '/health') return respond(res, {ok:true, watchmodeConfigured:Boolean(KEY)});
+  const match = path.match(/^\/stream\/(movie|series)\/(tt\d+)(?::(\d+):(\d+))?\.json$/);
+  if (!match) return respond(res,{error:'Not found'},404);
+  try { return respond(res,{streams:await streams(match[1],match[2],match[3]===undefined?undefined:Number(match[3]),match[4]===undefined?undefined:Number(match[4]))}); }
+  catch(err) { console.error(err.message); return respond(res,{streams:[]}); }
+}).listen(PORT,'0.0.0.0',()=>console.log('Arvio Where to Watch listening'));
