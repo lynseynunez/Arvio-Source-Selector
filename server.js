@@ -9,7 +9,7 @@ const providers = new Map([
 ]);
 const subscribed = new Set(['Netflix', 'Disney+', 'Peacock', 'Peacock Premium', 'Paramount+', 'Paramount+ Premium', 'Crunchyroll']);
 const manifest = {
-  id: 'community.arvio.source.selector', version: '0.2.0',
+  id: 'community.arvio.source.selector', version: '0.3.0',
   name: 'Arvio Source Selector',
   description: 'US subscription availability links for your streaming services; Real-Debrid remains in your existing add-ons.',
   resources: ['stream'], types: ['movie', 'series'], idPrefixes: ['tt'], catalogs: []
@@ -35,14 +35,33 @@ async function streams(type, imdb) {
   const watch = await tmdb('/' + kind + '/' + result.id + '/watch/providers');
   const us = watch.results?.US;
   if (!us?.link) return [];
-  // TMDB flatrate means included with subscription, not rent/buy.
-  const names = [...new Set((us.flatrate || []).filter(p => subscribed.has(providers.get(p.provider_id))).map(p => providers.get(p.provider_id).replace(/ Premium$/, '')))];
-  return names.map(name => ({
-    name: 'Watch on ' + name + ' (subscription)',
-    title: name + ' • Open viewing options',
-    externalUrl: us.link,
-    description: 'Opens TMDB watch options; select ' + name + ' there. Exact episode and app deep linking not yet supported.'
-  }));
+  const categories = [
+    ['flatrate', 'Included with subscription'],
+    ['free', 'Free'],
+    ['ads', 'Free with ads'],
+    ['rent', 'Rent'],
+    ['buy', 'Buy']
+  ];
+  const options = [];
+  const seen = new Set();
+  for (const [key, label] of categories) {
+    for (const provider of us[key] || []) {
+      const name = providers.get(provider.provider_id) || provider.provider_name;
+      if (!name) continue;
+      const isSubscribed = subscribed.has(name);
+      const display = name.replace(/ Premium$/, '');
+      const unique = key + ':' + display;
+      if (seen.has(unique)) continue;
+      seen.add(unique);
+      options.push({
+        name: label + ' • ' + display + (isSubscribed ? ' ✓ Your subscription' : ''),
+        title: label + ' — ' + display,
+        externalUrl: us.link,
+        description: 'View provider choices on TMDB. Direct provider deep links and prices are not available in this version.'
+      });
+    }
+  }
+  return options;
 }
 http.createServer(async (req, res) => {
   const path = new URL(req.url || '/', 'http://localhost').pathname;
