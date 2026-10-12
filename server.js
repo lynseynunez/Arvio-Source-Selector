@@ -42,7 +42,8 @@ function render(sources) {
     seen.add(key);
     return [{name: label + ' • ' + name + (own && type === 'sub' ? ' ✓ Subscribed' : '') + price,
       title: label + ' — ' + name + price, externalUrl: link,
-      externalUris: [{platform: 'android', uri: link}],\n      isSubscription: type === 'sub', isFree: type === 'free'}];
+      externalUris: [{platform: 'android', uri: link}],
+      isSubscription: type === 'sub', isFree: type === 'free'}];
   });
 }
 async function streams(type, imdb, season, episode) {
